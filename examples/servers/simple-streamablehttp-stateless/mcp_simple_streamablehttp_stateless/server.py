@@ -143,7 +143,7 @@ def main(
                     app.create_initialization_options(),
                     # Runs in standalone mode for stateless deployments
                     # where clients perform initialization with any node
-                    standalone_mode=True,
+                    stateless=True,
                 )
 
             # Start server task

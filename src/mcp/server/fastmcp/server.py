@@ -178,20 +178,26 @@ class FastMCP:
     def instructions(self) -> str | None:
         return self._mcp_server.instructions
 
-    def run(self, transport: Literal["stdio", "sse"] = "stdio") -> None:
+    def run(
+        self,
+        transport: Literal["stdio", "sse"] = "stdio",
+        raise_exceptions: bool = False,
+        stateless: bool = False,
+    ) -> None:
         """Run the FastMCP server. Note this is a synchronous function.
 
         Args:
             transport: Transport protocol to use ("stdio" or "sse")
+            stateless: Boolean value indicating whether server is stateless
         """
         TRANSPORTS = Literal["stdio", "sse"]
         if transport not in TRANSPORTS.__args__:  # type: ignore
             raise ValueError(f"Unknown transport: {transport}")
 
         if transport == "stdio":
-            anyio.run(self.run_stdio_async)
+            anyio.run(self.run_stdio_async, raise_exceptions, stateless)
         else:  # transport == "sse"
-            anyio.run(self.run_sse_async)
+            anyio.run(self.run_sse_async, raise_exceptions, stateless)
 
     def _setup_handlers(self) -> None:
         """Set up core MCP protocol handlers."""
@@ -543,20 +549,30 @@ class FastMCP:
 
         return decorator
 
-    async def run_stdio_async(self) -> None:
+    async def run_stdio_async(
+        self,
+        raise_exceptions: bool = False,
+        stateless: bool = False,
+    ) -> None:
         """Run the server using stdio transport."""
         async with stdio_server() as (read_stream, write_stream):
             await self._mcp_server.run(
                 read_stream,
                 write_stream,
                 self._mcp_server.create_initialization_options(),
+                raise_exceptions=raise_exceptions,
+                stateless=stateless,
             )
 
-    async def run_sse_async(self) -> None:
+    async def run_sse_async(
+        self,
+        raise_exceptions: bool = False,
+        stateless: bool = False,
+    ) -> None:
         """Run the server using SSE transport."""
         import uvicorn
 
-        starlette_app = self.sse_app()
+        starlette_app = self.sse_app(raise_exceptions, stateless)
 
         config = uvicorn.Config(
             starlette_app,
@@ -567,7 +583,9 @@ class FastMCP:
         server = uvicorn.Server(config)
         await server.serve()
 
-    def sse_app(self) -> Starlette:
+    def sse_app(
+        self, raise_exceptions: bool = False, stateless: bool = False
+    ) -> Starlette:
         """Return an instance of the SSE server app."""
         from starlette.middleware import Middleware
         from starlette.routing import Mount, Route
@@ -576,7 +594,13 @@ class FastMCP:
 
         sse = SseServerTransport(self.settings.message_path)
 
-        async def handle_sse(scope: Scope, receive: Receive, send: Send):
+        async def handle_sse(
+            scope: Scope,
+            receive: Receive,
+            send: Send,
+            raise_exceptions: bool,
+            stateless: bool,
+        ):
             # Add client ID from auth context into request context if available
 
             async with sse.connect_sse(
@@ -588,6 +612,8 @@ class FastMCP:
                     streams[0],
                     streams[1],
                     self._mcp_server.create_initialization_options(),
+                    raise_exceptions=raise_exceptions,
+                    stateless=stateless,
                 )
             return Response()
 
@@ -631,7 +657,12 @@ class FastMCP:
             routes.append(
                 Route(
                     self.settings.sse_path,
-                    endpoint=RequireAuthMiddleware(handle_sse, required_scopes),
+                    endpoint=RequireAuthMiddleware(
+                        handle_sse,
+                        required_scopes,
+                        raise_exceptions=raise_exceptions,
+                        stateless=stateless,
+                    ),
                     methods=["GET"],
                 )
             )
@@ -646,7 +677,13 @@ class FastMCP:
             # Since handle_sse is an ASGI app, we need to create a compatible endpoint
             async def sse_endpoint(request: Request) -> None:
                 # Convert the Starlette request to ASGI parameters
-                await handle_sse(request.scope, request.receive, request._send)  # type: ignore[reportPrivateUsage]
+                await handle_sse(
+                    request.scope,
+                    request.receive,
+                    request._send,  # type: ignore[reportPrivateUsage]
+                    raise_exceptions=raise_exceptions,
+                    stateless=stateless,
+                )
 
             routes.append(
                 Route(

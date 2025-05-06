@@ -60,7 +60,7 @@ class RequireAuthMiddleware:
     auth info in the request state.
     """
 
-    def __init__(self, app: Any, required_scopes: list[str]):
+    def __init__(self, app: Any, required_scopes: list[str], **app_kwargs: Any):
         """
         Initialize the middleware.
 
@@ -71,6 +71,7 @@ class RequireAuthMiddleware:
         """
         self.app = app
         self.required_scopes = required_scopes
+        self.app_kwargs = app_kwargs
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         auth_user = scope.get("user")
@@ -86,4 +87,4 @@ class RequireAuthMiddleware:
             ):
                 raise HTTPException(status_code=403, detail="Insufficient scope")
 
-        await self.app(scope, receive, send)
+        await self.app(scope, receive, send, **self.app_kwargs)
